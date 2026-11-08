@@ -1,0 +1,592 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Co-Living Room Finder</title>
+<style>
+  :root {
+    --ink: #1c2333;
+    --muted: #5b6478;
+    --brand: #2563eb;
+    --brand-dark: #1e40af;
+    --bg: #f4f6fb;
+    --card: #ffffff;
+    --line: #e2e7f0;
+    --ok: #15803d;
+    --warn: #b45309;
+    --radius: 14px;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--ink);
+  }
+  header {
+    background: linear-gradient(120deg, #1e3a8a, #2563eb);
+    color: #fff;
+    padding: 28px 18px 20px;
+  }
+  header .wrap, main { max-width: 1080px; margin: 0 auto; }
+  header h1 { margin: 0 0 6px; font-size: 28px; }
+  header p { margin: 0; opacity: .9; font-size: 15px; }
+  nav.tabs {
+    display: flex; gap: 8px; flex-wrap: nowrap; overflow-x: auto;
+    max-width: 1080px; margin: 16px auto 0; padding: 0 18px;
+  }
+  nav.tabs button {
+    border: 1px solid var(--line); background: var(--card); color: var(--ink);
+    padding: 10px 16px; border-radius: 999px; font-size: 15px; cursor: pointer; white-space: nowrap;
+  }
+  nav.tabs button.active { background: var(--brand); border-color: var(--brand); color: #fff; }
+  main { padding: 18px; }
+  .panel {
+    background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 18px; margin-bottom: 18px;
+  }
+  .filters { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+  label { display: block; font-size: 13px; font-weight: 600; margin: 10px 0 4px; color: var(--muted); }
+  input, select, textarea {
+    width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px;
+    font-size: 15px; font-family: inherit; background: #fff; color: var(--ink);
+  }
+  textarea { min-height: 84px; resize: vertical; }
+  .check { display: flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 500; color: var(--ink); margin: 10px 0 0; }
+  .check input { width: auto; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; }
+  .card {
+    background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
+    overflow: hidden; display: flex; flex-direction: column;
+  }
+  .card img { width: 100%; height: 180px; object-fit: cover; background: #dbe4f5; display: block; }
+  .card .ph {
+    height: 180px; display: flex; align-items: center; justify-content: center;
+    background: linear-gradient(135deg, #dbeafe, #bfdbfe); font-size: 44px;
+  }
+  .card .body { padding: 14px 16px; display: flex; flex-direction: column; gap: 6px; flex: 1; }
+  .price { font-size: 22px; font-weight: 700; }
+  .price small { font-size: 13px; color: var(--muted); font-weight: 500; }
+  .title { font-size: 17px; font-weight: 600; }
+  .sub { color: var(--muted); font-size: 14px; }
+  .tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+  .tag { background: #eef2ff; color: #3730a3; font-size: 12px; padding: 3px 8px; border-radius: 999px; }
+  .tag.gray { background: #f1f5f9; color: var(--muted); }
+  button.btn {
+    background: var(--brand); color: #fff; border: none; padding: 11px 18px;
+    border-radius: 10px; font-size: 15px; font-weight: 600; cursor: pointer;
+  }
+  button.btn:hover { background: var(--brand-dark); }
+  button.btn.secondary { background: #fff; color: var(--ink); border: 1px solid var(--line); }
+  button.btn.small { padding: 7px 12px; font-size: 13px; }
+  button.btn.danger { background: #b91c1c; }
+  button.btn:disabled { opacity: .55; cursor: default; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  .mt { margin-top: 14px; }
+  .empty { text-align: center; color: var(--muted); padding: 34px 12px; font-size: 15px; }
+  .status { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
+  .status.active, .status.accepted { color: var(--ok); }
+  .status.paused, .status.reviewing { color: var(--warn); }
+  .status.filled, .status.declined { color: #b91c1c; }
+  .status.new { color: var(--brand); }
+  .msg { padding: 12px 14px; border-radius: 10px; font-size: 14px; margin: 12px 0; display: none; }
+  .msg.ok { background: #dcfce7; color: #166534; display: block; }
+  .msg.err { background: #fee2e2; color: #991b1b; display: block; }
+  .facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; margin: 14px 0; }
+  .fact { background: #f8fafc; border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+  .fact b { display: block; font-size: 15px; }
+  .fact span { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+  .amenities { display: flex; flex-wrap: wrap; gap: 8px; }
+  .amenities .check { background: #f8fafc; border: 1px solid var(--line); border-radius: 999px; padding: 6px 12px; margin: 0; }
+  table.inbox { width: 100%; border-collapse: collapse; font-size: 14px; }
+  table.inbox th, table.inbox td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  .scrollx { overflow-x: auto; }
+  .backlink { color: var(--brand); cursor: pointer; font-size: 14px; font-weight: 600; }
+  @media (max-width: 600px) {
+    header h1 { font-size: 23px; }
+    .grid { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <h1>🏠 Co-Living Room Finder</h1>
+    <p>Find a room in a shared home — or list yours and review applications.</p>
+  </div>
+</header>
+
+<nav class="tabs">
+  <button data-tab="browse" class="active">Browse Rooms</button>
+  <button data-tab="list">List a Room</button>
+  <button data-tab="mine">My Listings</button>
+  <button data-tab="inbox">Applications</button>
+</nav>
+
+<main>
+  <!-- ============ BROWSE ============ -->
+  <section id="tab-browse">
+    <div class="panel">
+      <div class="filters">
+        <div>
+          <label for="f-search">Search</label>
+          <input id="f-search" type="text" placeholder="Keyword, neighborhood…">
+        </div>
+        <div>
+          <label for="f-city">City</label>
+          <input id="f-city" type="text" placeholder="Any city">
+        </div>
+        <div>
+          <label for="f-maxrent">Max rent ($/mo)</label>
+          <input id="f-maxrent" type="number" min="0" placeholder="No max">
+        </div>
+        <div>
+          <label for="f-roomtype">Room type</label>
+          <select id="f-roomtype">
+            <option value="">Any</option>
+            <option value="private">Private room</option>
+            <option value="shared">Shared room</option>
+          </select>
+        </div>
+        <div>
+          <label for="f-furnished">Furnished</label>
+          <select id="f-furnished">
+            <option value="">Any</option>
+            <option value="true">Furnished only</option>
+          </select>
+        </div>
+      </div>
+      <div class="row mt">
+        <button class="btn" id="f-apply">Search</button>
+        <button class="btn secondary" id="f-clear">Clear</button>
+      </div>
+    </div>
+
+    <div id="browse-results"><div class="empty">Loading rooms…</div></div>
+
+    <!-- Detail + apply -->
+    <div id="detail" class="panel" style="display:none"></div>
+  </section>
+
+  <!-- ============ LIST A ROOM ============ -->
+  <section id="tab-list" style="display:none">
+    <div class="panel">
+      <h2 id="listing-form-title" style="margin-top:0">List a room</h2>
+      <div class="msg" id="list-msg"></div>
+      <form id="listing-form">
+        <input type="hidden" id="lf-id">
+        <div class="filters">
+          <div><label>Your name *</label><input id="lf-owner-name" required></div>
+          <div><label>Your email *</label><input id="lf-owner-email" type="email" required></div>
+          <div><label>Listing title *</label><input id="lf-title" required placeholder="Sunny private room near downtown"></div>
+          <div><label>City *</label><input id="lf-city" required placeholder="Washington, DC"></div>
+          <div><label>Neighborhood / area</label><input id="lf-neighborhood" placeholder="Adams Morgan"></div>
+          <div><label>Monthly rent ($) *</label><input id="lf-rent" type="number" min="0" step="1" required></div>
+          <div><label>Deposit ($)</label><input id="lf-deposit" type="number" min="0" step="1"></div>
+          <div><label>Room type</label>
+            <select id="lf-room-type"><option value="private">Private room</option><option value="shared">Shared room</option></select></div>
+          <div><label>Bathroom</label>
+            <select id="lf-bathroom"><option value="private">Private bathroom</option><option value="shared">Shared bathroom</option></select></div>
+          <div><label>Available from</label><input id="lf-available" type="date"></div>
+          <div><label>Minimum stay (months)</label><input id="lf-minstay" type="number" min="1" step="1" value="1"></div>
+          <div><label>Number of housemates</label><input id="lf-housemates" type="number" min="0" step="1" value="0"></div>
+          <div><label>Photo URL (optional)</label><input id="lf-photo" type="url" placeholder="https://…"></div>
+        </div>
+        <label class="check"><input type="checkbox" id="lf-furnished"> Furnished</label>
+        <label class="check"><input type="checkbox" id="lf-utilities"> Utilities included</label>
+        <label>Amenities</label>
+        <div class="amenities" id="lf-amenities"></div>
+        <label>Description</label>
+        <textarea id="lf-description" placeholder="Tell renters about the room, the home, and the location…"></textarea>
+        <label>House rules</label>
+        <textarea id="lf-rules" placeholder="Quiet hours, guests, smoking, pets…"></textarea>
+        <div class="row mt">
+          <button class="btn" type="submit" id="lf-submit">Publish listing</button>
+          <button class="btn secondary" type="button" id="lf-cancel-edit" style="display:none">Cancel edit</button>
+        </div>
+      </form>
+    </div>
+  </section>
+
+  <!-- ============ MY LISTINGS ============ -->
+  <section id="tab-mine" style="display:none">
+    <div class="panel">
+      <h2 style="margin-top:0">My listings</h2>
+      <label>Your owner email</label>
+      <div class="row">
+        <input id="mine-email" type="email" placeholder="you@example.com" style="max-width:340px">
+        <button class="btn" id="mine-load">Load my listings</button>
+      </div>
+      <div class="msg" id="mine-msg"></div>
+      <div id="mine-results" class="mt"></div>
+    </div>
+  </section>
+
+  <!-- ============ APPLICATIONS INBOX ============ -->
+  <section id="tab-inbox" style="display:none">
+    <div class="panel">
+      <h2 style="margin-top:0">Applications</h2>
+      <label>Your owner email</label>
+      <div class="row">
+        <input id="inbox-email" type="email" placeholder="you@example.com" style="max-width:340px">
+        <button class="btn" id="inbox-load">Load applications</button>
+      </div>
+      <div class="msg" id="inbox-msg"></div>
+      <div id="inbox-results" class="mt"></div>
+    </div>
+  </section>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const AMENITIES = ['Wi-Fi', 'In-unit laundry', 'Washer/dryer access', 'Parking', 'Air conditioning',
+  'Dishwasher', 'Backyard / patio', 'Gym', 'Pets allowed', 'Desk / workspace', 'TV', 'Bike storage'];
+
+function esc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, (c) =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+function money(v) { return '$' + Number(v || 0).toLocaleString(); }
+function showMsg(el, text, ok) {
+  el.textContent = text;
+  el.className = 'msg ' + (ok ? 'ok' : 'err');
+}
+async function api(url, opts) {
+  const res = await fetch(url, opts);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'Request failed');
+  return data;
+}
+
+/* ---------- Tabs ---------- */
+document.querySelectorAll('nav.tabs button').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('nav.tabs button').forEach((b) => b.classList.remove('active'));
+    btn.classList.add('active');
+    ['browse', 'list', 'mine', 'inbox'].forEach((t) => {
+      $('tab-' + t).style.display = t === btn.dataset.tab ? '' : 'none';
+    });
+  });
+});
+function goTab(name) {
+  document.querySelector('nav.tabs button[data-tab="' + name + '"]').click();
+}
+
+/* ---------- Browse ---------- */
+function listingCard(l) {
+  const photo = l.photo_url
+    ? '<img src="' + esc(l.photo_url) + '" alt="" onerror="this.outerHTML=\'<div class=ph>🛏️</div>\'">'
+    : '<div class="ph">🛏️</div>';
+  return '<article class="card">' + photo + '<div class="body">' +
+    '<div class="price">' + money(l.rent) + ' <small>/ month</small></div>' +
+    '<div class="title">' + esc(l.title) + '</div>' +
+    '<div class="sub">' + esc(l.city) + (l.neighborhood ? ' · ' + esc(l.neighborhood) : '') + '</div>' +
+    '<div class="tags">' +
+      '<span class="tag">' + (l.room_type === 'shared' ? 'Shared room' : 'Private room') + '</span>' +
+      '<span class="tag">' + (l.bathroom === 'shared' ? 'Shared bath' : 'Private bath') + '</span>' +
+      (l.furnished ? '<span class="tag">Furnished</span>' : '') +
+      (l.utilities_included ? '<span class="tag">Utilities incl.</span>' : '') +
+      (l.available_date ? '<span class="tag gray">From ' + esc(l.available_date) + '</span>' : '') +
+    '</div>' +
+    '<div class="row mt"><button class="btn small" onclick="showDetail(' + l.id + ')">View &amp; Apply</button></div>' +
+    '</div></article>';
+}
+
+async function loadBrowse() {
+  const params = new URLSearchParams();
+  if ($('f-search').value.trim()) params.set('search', $('f-search').value.trim());
+  if ($('f-city').value.trim()) params.set('city', $('f-city').value.trim());
+  if ($('f-maxrent').value) params.set('maxRent', $('f-maxrent').value);
+  if ($('f-roomtype').value) params.set('roomType', $('f-roomtype').value);
+  if ($('f-furnished').value) params.set('furnished', $('f-furnished').value);
+  const box = $('browse-results');
+  box.innerHTML = '<div class="empty">Loading rooms…</div>';
+  try {
+    const listings = await api('/api/listings?' + params.toString());
+    if (!listings.length) {
+      box.innerHTML = '<div class="panel empty">No rooms match those filters. Try widening your search — or be the first to <a href="#" onclick="goTab(\'list\');return false;">list a room</a>.</div>';
+      return;
+    }
+    box.innerHTML = '<div class="grid">' + listings.map(listingCard).join('') + '</div>';
+  } catch (e) {
+    box.innerHTML = '<div class="panel empty">Could not load rooms: ' + esc(e.message) + '</div>';
+  }
+}
+$('f-apply').addEventListener('click', loadBrowse);
+$('f-clear').addEventListener('click', () => {
+  ['f-search', 'f-city', 'f-maxrent', 'f-roomtype', 'f-furnished'].forEach((id) => { $(id).value = ''; });
+  loadBrowse();
+});
+
+/* ---------- Detail + Apply ---------- */
+async function showDetail(id) {
+  const panel = $('detail');
+  panel.style.display = '';
+  panel.innerHTML = '<div class="empty">Loading…</div>';
+  panel.scrollIntoView({ behavior: 'smooth' });
+  try {
+    const l = await api('/api/listings/' + id);
+    const facts = [
+      ['Rent', money(l.rent) + ' / month'],
+      ['Deposit', money(l.deposit)],
+      ['Room', l.room_type === 'shared' ? 'Shared room' : 'Private room'],
+      ['Bathroom', l.bathroom === 'shared' ? 'Shared' : 'Private'],
+      ['Furnished', l.furnished ? 'Yes' : 'No'],
+      ['Utilities included', l.utilities_included ? 'Yes' : 'No'],
+      ['Available', l.available_date || 'Now'],
+      ['Minimum stay', (l.min_stay_months || 1) + ' month(s)'],
+      ['Housemates', String(l.housemates || 0)]
+    ];
+    panel.innerHTML =
+      '<span class="backlink" onclick="hideDetail()">← Back to results</span>' +
+      '<h2 style="margin:10px 0 4px">' + esc(l.title) + '</h2>' +
+      '<div class="sub">' + esc(l.city) + (l.neighborhood ? ' · ' + esc(l.neighborhood) : '') + '</div>' +
+      (l.photo_url ? '<img src="' + esc(l.photo_url) + '" alt="" style="width:100%;max-height:340px;object-fit:cover;border-radius:10px;margin-top:12px" onerror="this.style.display=\'none\'">' : '') +
+      '<div class="facts">' + facts.map((f) => '<div class="fact"><span>' + f[0] + '</span><b>' + esc(f[1]) + '</b></div>').join('') + '</div>' +
+      (l.description ? '<h3>About this room</h3><p>' + esc(l.description) + '</p>' : '') +
+      (l.amenities && l.amenities.length ? '<h3>Amenities</h3><div class="tags">' + l.amenities.map((a) => '<span class="tag">' + esc(a) + '</span>').join('') + '</div>' : '') +
+      (l.house_rules ? '<h3>House rules</h3><p>' + esc(l.house_rules) + '</p>' : '') +
+      '<h3 class="mt">Apply for this room</h3>' +
+      '<div class="msg" id="apply-msg"></div>' +
+      '<form id="apply-form">' +
+        '<div class="filters">' +
+          '<div><label>Your name *</label><input id="af-name" required></div>' +
+          '<div><label>Email *</label><input id="af-email" type="email" required></div>' +
+          '<div><label>Phone</label><input id="af-phone" type="tel"></div>' +
+          '<div><label>Desired move-in date</label><input id="af-movein" type="date"></div>' +
+          '<div><label>Planned stay</label><input id="af-stay" placeholder="e.g. 6 months"></div>' +
+        '</div>' +
+        '<label>About you</label>' +
+        '<textarea id="af-message" placeholder="A short note about yourself, your work, lifestyle, etc."></textarea>' +
+        '<div class="row mt"><button class="btn" type="submit">Send application</button></div>' +
+      '</form>';
+    $('apply-form').addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      const body = {
+        applicant_name: $('af-name').value,
+        email: $('af-email').value,
+        phone: $('af-phone').value,
+        move_in_date: $('af-movein').value,
+        planned_stay: $('af-stay').value,
+        message: $('af-message').value
+      };
+      try {
+        await api('/api/listings/' + id + '/applications', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+        });
+        showMsg($('apply-msg'), '✅ Application sent! The owner will review it and get back to you.', true);
+        $('apply-form').reset();
+      } catch (e) {
+        showMsg($('apply-msg'), e.message, false);
+      }
+    });
+  } catch (e) {
+    panel.innerHTML = '<div class="empty">Could not load this room: ' + esc(e.message) + '</div>';
+  }
+}
+function hideDetail() {
+  $('detail').style.display = 'none';
+  $('detail').innerHTML = '';
+}
+
+/* ---------- List / edit a room ---------- */
+$('lf-amenities').innerHTML = AMENITIES.map((a) =>
+  '<label class="check"><input type="checkbox" value="' + esc(a) + '"> ' + esc(a) + '</label>').join('');
+
+function listingFormData() {
+  return {
+    owner_name: $('lf-owner-name').value,
+    owner_email: $('lf-owner-email').value,
+    title: $('lf-title').value,
+    city: $('lf-city').value,
+    neighborhood: $('lf-neighborhood').value,
+    rent: $('lf-rent').value,
+    deposit: $('lf-deposit').value || 0,
+    room_type: $('lf-room-type').value,
+    bathroom: $('lf-bathroom').value,
+    furnished: $('lf-furnished').checked,
+    utilities_included: $('lf-utilities').checked,
+    available_date: $('lf-available').value,
+    min_stay_months: $('lf-minstay').value || 1,
+    housemates: $('lf-housemates').value || 0,
+    description: $('lf-description').value,
+    amenities: Array.from(document.querySelectorAll('#lf-amenities input:checked')).map((c) => c.value),
+    house_rules: $('lf-rules').value,
+    photo_url: $('lf-photo').value
+  };
+}
+
+$('listing-form').addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  const data = listingFormData();
+  localStorage.setItem('ownerEmail', data.owner_email);
+  const id = $('lf-id').value;
+  try {
+    if (id) {
+      await api('/api/listings/' + id, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data)
+      });
+      showMsg($('list-msg'), '✅ Listing updated.', true);
+    } else {
+      await api('/api/listings', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data)
+      });
+      showMsg($('list-msg'), '✅ Your room is listed! It now appears in Browse Rooms.', true);
+      $('listing-form').reset();
+    }
+    $('lf-id').value = '';
+    $('listing-form-title').textContent = 'List a room';
+    $('lf-submit').textContent = 'Publish listing';
+    $('lf-cancel-edit').style.display = 'none';
+    loadBrowse();
+  } catch (e) {
+    showMsg($('list-msg'), e.message, false);
+  }
+});
+
+function editListing(l) {
+  $('lf-id').value = l.id;
+  $('lf-owner-name').value = l.owner_name || '';
+  $('lf-owner-email').value = l.owner_email || '';
+  $('lf-title').value = l.title || '';
+  $('lf-city').value = l.city || '';
+  $('lf-neighborhood').value = l.neighborhood || '';
+  $('lf-rent').value = l.rent || '';
+  $('lf-deposit').value = l.deposit || '';
+  $('lf-room-type').value = l.room_type || 'private';
+  $('lf-bathroom').value = l.bathroom || 'private';
+  $('lf-available').value = l.available_date || '';
+  $('lf-minstay').value = l.min_stay_months || 1;
+  $('lf-housemates').value = l.housemates || 0;
+  $('lf-photo').value = l.photo_url || '';
+  $('lf-furnished').checked = !!l.furnished;
+  $('lf-utilities').checked = !!l.utilities_included;
+  document.querySelectorAll('#lf-amenities input').forEach((c) => {
+    c.checked = (l.amenities || []).includes(c.value);
+  });
+  $('lf-description').value = l.description || '';
+  $('lf-rules').value = l.house_rules || '';
+  $('listing-form-title').textContent = 'Edit listing';
+  $('lf-submit').textContent = 'Save changes';
+  $('lf-cancel-edit').style.display = '';
+  goTab('list');
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+$('lf-cancel-edit').addEventListener('click', () => {
+  $('lf-id').value = '';
+  $('listing-form').reset();
+  $('listing-form-title').textContent = 'List a room';
+  $('lf-submit').textContent = 'Publish listing';
+  $('lf-cancel-edit').style.display = 'none';
+});
+
+/* ---------- My listings ---------- */
+async function loadMine() {
+  const email = $('mine-email').value.trim().toLowerCase();
+  if (!email) { showMsg($('mine-msg'), 'Enter your owner email first.', false); return; }
+  localStorage.setItem('ownerEmail', email);
+  const box = $('mine-results');
+  box.innerHTML = '<div class="empty">Loading…</div>';
+  try {
+    const listings = await api('/api/my-listings?email=' + encodeURIComponent(email));
+    if (!listings.length) {
+      box.innerHTML = '<div class="empty">No listings found for that email yet. Use “List a Room” to add one.</div>';
+      return;
+    }
+    box.innerHTML = '<div class="grid">' + listings.map((l) =>
+      '<article class="card"><div class="body">' +
+      '<div class="row" style="justify-content:space-between"><span class="price">' + money(l.rent) + ' <small>/mo</small></span>' +
+      '<span class="status ' + l.status + '">' + l.status + '</span></div>' +
+      '<div class="title">' + esc(l.title) + '</div>' +
+      '<div class="sub">' + esc(l.city) + (l.neighborhood ? ' · ' + esc(l.neighborhood) : '') + '</div>' +
+      '<div class="sub">📩 ' + (l.application_count || 0) + ' application(s)</div>' +
+      '<div class="row mt">' +
+        '<button class="btn small secondary" onclick=\'editListing(' + JSON.stringify(l).replace(/'/g, "&#39;") + ')\'>Edit</button>' +
+        (l.status === 'active' ? '<button class="btn small secondary" onclick="setStatus(' + l.id + ',\'paused\')">Pause</button>' : '') +
+        (l.status !== 'active' ? '<button class="btn small secondary" onclick="setStatus(' + l.id + ',\'active\')">Reactivate</button>' : '') +
+        (l.status !== 'filled' ? '<button class="btn small secondary" onclick="setStatus(' + l.id + ',\'filled\')">Mark filled</button>' : '') +
+        '<button class="btn small danger" onclick="deleteListing(' + l.id + ')">Delete</button>' +
+      '</div></div></article>').join('') + '</div>';
+  } catch (e) {
+    box.innerHTML = '<div class="empty">' + esc(e.message) + '</div>';
+  }
+}
+$('mine-load').addEventListener('click', loadMine);
+
+async function setStatus(id, status) {
+  const email = $('mine-email').value.trim().toLowerCase();
+  try {
+    await api('/api/listings/' + id + '/status', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ owner_email: email, status })
+    });
+    loadMine(); loadBrowse();
+  } catch (e) { showMsg($('mine-msg'), e.message, false); }
+}
+async function deleteListing(id) {
+  if (!confirm('Delete this listing and all its applications?')) return;
+  const email = $('mine-email').value.trim().toLowerCase();
+  try {
+    await api('/api/listings/' + id + '?email=' + encodeURIComponent(email), { method: 'DELETE' });
+    loadMine(); loadBrowse();
+  } catch (e) { showMsg($('mine-msg'), e.message, false); }
+}
+
+/* ---------- Applications inbox ---------- */
+async function loadInbox() {
+  const email = $('inbox-email').value.trim().toLowerCase();
+  if (!email) { showMsg($('inbox-msg'), 'Enter your owner email first.', false); return; }
+  localStorage.setItem('ownerEmail', email);
+  const box = $('inbox-results');
+  box.innerHTML = '<div class="empty">Loading…</div>';
+  try {
+    const apps = await api('/api/applications?email=' + encodeURIComponent(email));
+    if (!apps.length) {
+      box.innerHTML = '<div class="empty">No applications yet for listings under that email.</div>';
+      return;
+    }
+    const rows = apps.map((a) =>
+      '<tr><td><b>' + esc(a.listing_title) + '</b><br><span class="sub">' + esc(a.listing_city) + '</span></td>' +
+      '<td><b>' + esc(a.applicant_name) + '</b><br>' + esc(a.email) +
+        (a.phone ? '<br>' + esc(a.phone) : '') +
+        (a.message ? '<br><span class="sub">“' + esc(a.message) + '”</span>' : '') + '</td>' +
+      '<td>' + (a.move_in_date ? 'Move-in: ' + esc(a.move_in_date) + '<br>' : '') +
+        (a.planned_stay ? 'Stay: ' + esc(a.planned_stay) : '') + '</td>' +
+      '<td><span class="status ' + a.status + '">' + a.status + '</span></td>' +
+      '<td><div class="row">' +
+        ['new', 'reviewing', 'accepted', 'declined'].map((s) =>
+          '<button class="btn small ' + (a.status === s ? '' : 'secondary') + '" onclick="setAppStatus(' + a.id + ',\'' + s + '\')">' +
+          s.charAt(0).toUpperCase() + s.slice(1) + '</button>').join('') +
+      '</div></td></tr>').join('');
+    box.innerHTML = '<div class="scrollx"><table class="inbox"><thead><tr>' +
+      '<th>Room</th><th>Applicant</th><th>Timing</th><th>Status</th><th>Set status</th>' +
+      '</tr></thead><tbody>' + rows + '</tbody></table></div>';
+  } catch (e) {
+    box.innerHTML = '<div class="empty">' + esc(e.message) + '</div>';
+  }
+}
+$('inbox-load').addEventListener('click', loadInbox);
+
+async function setAppStatus(id, status) {
+  const email = $('inbox-email').value.trim().toLowerCase();
+  try {
+    await api('/api/applications/' + id + '/status', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ owner_email: email, status })
+    });
+    loadInbox();
+  } catch (e) { showMsg($('inbox-msg'), e.message, false); }
+}
+
+/* ---------- Init ---------- */
+const savedEmail = localStorage.getItem('ownerEmail') || '';
+if (savedEmail) {
+  $('mine-email').value = savedEmail;
+  $('inbox-email').value = savedEmail;
+  $('lf-owner-email').value = savedEmail;
+}
+loadBrowse();
+</script>
+</body>
+</html>
