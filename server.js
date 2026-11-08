@@ -186,6 +186,10 @@ const pgStore = {
       `SELECT * FROM listings WHERE ${clauses.join(' AND ')} ORDER BY created_at DESC`, params);
     return rows.map(pgRowToListing);
   },
+  async listAll() {
+    const { rows } = await pool.query('SELECT * FROM listings ORDER BY created_at DESC');
+    return rows.map(pgRowToListing);
+  },
   async get(id) {
     const { rows } = await pool.query('SELECT * FROM listings WHERE id = $1', [id]);
     return rows.length ? pgRowToListing(rows[0]) : null;
@@ -284,6 +288,10 @@ const jsonStore = {
       if (filters.furnished === 'true' && !l.furnished) return false;
       return true;
     }).sort((a, b) => b.id - a.id);
+  },
+  async listAll() {
+    const db = jsonLoad();
+    return [...db.listings].sort((a, b) => b.id - a.id);
   },
   async get(id) {
     const db = jsonLoad();
@@ -519,6 +527,122 @@ app.post('/api/applications/:id/status', async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to update application' });
+  }
+});
+
+/* ---------------- RentCast import ---------------- */
+
+// Map one RentCast long-term rental listing into this app's listing shape.
+// The result is passed through normalizeListingInput and store.create, so
+// imports live in the same storage (PostgreSQL or JSON file) as manual listings.
+function rentcastToListing(r) {
+  const city = String(r.city || '').trim();
+  let title = String(r.formattedAddress || '').trim();
+  if (!title) {
+    const line1 = String(r.addressLine1 || '').trim();
+    if (line1) title = city ? line1 + ', ' + city : line1;
+  }
+  if (!title) title = 'Rental in ' + (city || 'this area');
+  const facts = [];
+  if (r.bedrooms != null && r.bedrooms !== '') facts.push(r.bedrooms + ' bed');
+  if (r.bathrooms != null && r.bathrooms !== '') facts.push(r.bathrooms + ' bath');
+  if (r.squareFootage) facts.push(Number(r.squareFootage).toLocaleString() + ' sq ft');
+  if (r.propertyType) facts.push(String(r.propertyType));
+  const note = 'Imported from RentCast — reference listing; contact the listing office for availability.';
+  const listed = typeof r.listedDate === 'string' ? r.listedDate.slice(0, 10) : '';
+  return {
+    owner_name: (r.listingOffice && r.listingOffice.name) || 'RentCast import',
+    owner_email: 'imports@rentcast.local',
+    title,
+    city,
+    neighborhood: '',
+    rent: r.listPrice != null ? r.listPrice : (r.price != null ? r.price : 0),
+    deposit: 0,
+    room_type: 'private',
+    bathroom: 'private',
+    furnished: false,
+    utilities_included: false,
+    available_date: /^\d{4}-\d{2}-\d{2}$/.test(listed) ? listed : '',
+    min_stay_months: 1,
+    housemates: 0,
+    description: (facts.length ? facts.join(' · ') + '. ' : '') + note,
+    amenities: [],
+    house_rules: '',
+    photo_url: '',
+    status: 'active'
+  };
+}
+
+// Import: pull active rental listings from RentCast for a city/state/ZIP
+app.post('/api/import/rentals', async (req, res) => {
+  try {
+    const apiKey = process.env.RENTCAST_API_KEY || '';
+    if (!apiKey) {
+      return res.status(503).json({ error: "Import isn't configured yet — add RENTCAST_API_KEY to the Railway variables." });
+    }
+    const body = req.body || {};
+    const city = String(body.city || '').trim();
+    const state = String(body.state || '').trim();
+    const zipCode = String(body.zipCode || '').trim();
+    if (!city && !state && !zipCode) {
+      return res.status(400).json({ error: 'Enter a city, state, or ZIP code to import rentals for.' });
+    }
+    let limit = parseInt(body.limit, 10);
+    if (!Number.isFinite(limit)) limit = 20;
+    limit = Math.min(50, Math.max(1, limit));
+
+    const params = new URLSearchParams({ status: 'Active', limit: String(limit) });
+    if (city) params.set('city', city);
+    if (state) params.set('state', state);
+    if (zipCode) params.set('zipCode', zipCode);
+
+    let upstream;
+    try {
+      upstream = await fetch('https://api.rentcast.io/v1/listings/rental/long-term?' + params.toString(), {
+        headers: { 'X-Api-Key': apiKey, 'Accept': 'application/json' },
+        signal: AbortSignal.timeout(15000)
+      });
+    } catch (netErr) {
+      if (netErr && (netErr.name === 'TimeoutError' || netErr.name === 'AbortError')) {
+        return res.status(504).json({ error: 'RentCast took too long to respond — please try again in a moment.' });
+      }
+      console.error(netErr);
+      return res.status(502).json({ error: 'Could not reach RentCast right now — please try again later.' });
+    }
+
+    if (!upstream.ok) {
+      if (upstream.status === 401 || upstream.status === 403) {
+        return res.status(502).json({ error: 'RentCast rejected the API key — check that RENTCAST_API_KEY is correct in the Railway variables.' });
+      }
+      if (upstream.status === 429) {
+        return res.status(502).json({ error: 'RentCast rate limit hit — the free monthly quota may be used up. Try again later or upgrade your RentCast plan.' });
+      }
+      return res.status(502).json({ error: 'RentCast returned an error (HTTP ' + upstream.status + ') — please try again later.' });
+    }
+
+    const payload = await upstream.json().catch(() => null);
+    const results = Array.isArray(payload) ? payload : [];
+
+    const dedupeKey = (l) => [
+      String(l.title || '').trim().toLowerCase(),
+      String(l.city || '').trim().toLowerCase(),
+      Number(l.rent) || 0
+    ].join('|');
+    const existing = new Set((await store.listAll()).map(dedupeKey));
+    let imported = 0;
+    let skipped = 0;
+    for (const raw of results) {
+      const data = normalizeListingInput(rentcastToListing(raw || {}));
+      const key = dedupeKey(data);
+      if (existing.has(key)) { skipped++; continue; }
+      await store.create(data);
+      existing.add(key);
+      imported++;
+    }
+    res.json({ imported, skipped, total: results.length });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to import rentals' });
   }
 });
 

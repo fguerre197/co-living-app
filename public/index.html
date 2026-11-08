@@ -163,6 +163,29 @@
       </div>
     </div>
 
+    <div class="panel">
+      <h3 style="margin:0 0 4px">Import rentals</h3>
+      <p class="sub" style="margin:0">Pull active rental listings from RentCast into Browse Rooms. Imported listings are references — the listing office still handles renting.</p>
+      <div class="msg" id="import-msg"></div>
+      <div class="filters">
+        <div>
+          <label for="imp-city">City</label>
+          <input id="imp-city" type="text" placeholder="e.g. San Antonio">
+        </div>
+        <div>
+          <label for="imp-state">State</label>
+          <input id="imp-state" type="text" maxlength="2" placeholder="TX" style="text-transform:uppercase">
+        </div>
+        <div>
+          <label for="imp-zip">ZIP code</label>
+          <input id="imp-zip" type="text" inputmode="numeric" maxlength="5" placeholder="e.g. 78205">
+        </div>
+      </div>
+      <div class="row mt">
+        <button class="btn" id="imp-btn" type="button">Import rentals</button>
+      </div>
+    </div>
+
     <div id="browse-results"><div class="empty">Loading rooms…</div></div>
 
     <!-- Detail + apply -->
@@ -317,6 +340,38 @@ $('f-apply').addEventListener('click', loadBrowse);
 $('f-clear').addEventListener('click', () => {
   ['f-search', 'f-city', 'f-maxrent', 'f-roomtype', 'f-furnished'].forEach((id) => { $(id).value = ''; });
   loadBrowse();
+});
+
+/* ---------- Import rentals (RentCast) ---------- */
+$('imp-btn').addEventListener('click', async () => {
+  const btn = $('imp-btn');
+  const body = {
+    city: $('imp-city').value.trim(),
+    state: $('imp-state').value.trim().toUpperCase(),
+    zipCode: $('imp-zip').value.trim()
+  };
+  if (!body.city && !body.state && !body.zipCode) {
+    showMsg($('import-msg'), 'Enter a city, state, or ZIP code first.', false);
+    return;
+  }
+  btn.disabled = true;
+  const original = btn.textContent;
+  btn.textContent = 'Importing…';
+  try {
+    const r = await api('/api/import/rentals', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+    });
+    showMsg($('import-msg'),
+      '✅ Imported ' + r.imported + ' new listing(s)' +
+      (r.skipped ? ' — skipped ' + r.skipped + ' already in the app' : '') +
+      ' (' + r.total + ' found).', true);
+    loadBrowse();
+  } catch (e) {
+    showMsg($('import-msg'), e.message, false);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = original;
+  }
 });
 
 /* ---------- Detail + Apply ---------- */
