@@ -131,6 +131,11 @@ async function pgInit() {
       status TEXT NOT NULL DEFAULT 'new',
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
+    CREATE TABLE IF NOT EXISTS app_settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL DEFAULT '',
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
   `);
 }
 
@@ -263,9 +268,12 @@ const DATA_FILE = path.join(__dirname, 'data.json');
 function jsonLoad() {
   try {
     const parsed = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
-    if (Array.isArray(parsed.listings) && Array.isArray(parsed.applications)) return parsed;
+    if (Array.isArray(parsed.listings) && Array.isArray(parsed.applications)) {
+      if (!parsed.settings || typeof parsed.settings !== 'object') parsed.settings = {};
+      return parsed;
+    }
   } catch (_) { /* missing or unreadable file: start fresh */ }
-  return { listings: [], applications: [], nextListingId: 1, nextApplicationId: 1 };
+  return { listings: [], applications: [], settings: {}, nextListingId: 1, nextApplicationId: 1 };
 }
 
 function jsonSave(db) {
@@ -378,6 +386,57 @@ const jsonStore = {
 };
 
 const store = USE_PG ? pgStore : jsonStore;
+
+/* ------------------------------------------------------------------ */
+/* App settings (RentCast key stored in the app's own database)        */
+/*                                                                     */
+/* The RentCast key used to live only in a Railway variable, which    */
+/* repeatedly failed to reach the running app. Storing it here — in   */
+/* PostgreSQL when DATABASE_URL is set, otherwise in data.json —      */
+/* means pasting the key once in the app is enough. The key is never  */
+/* returned by any endpoint; only whether one is configured.           */
+/* ------------------------------------------------------------------ */
+
+async function getSetting(key) {
+  if (USE_PG) {
+    const { rows } = await pool.query('SELECT value FROM app_settings WHERE key = $1', [key]);
+    return rows.length ? rows[0].value : '';
+  }
+  const db = jsonLoad();
+  return String((db.settings && db.settings[key]) || '');
+}
+
+async function setSetting(key, value) {
+  if (USE_PG) {
+    await pool.query(
+      `INSERT INTO app_settings (key, value, updated_at) VALUES ($1, $2, now())
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`,
+      [key, value]);
+    return;
+  }
+  const db = jsonLoad();
+  db.settings[key] = value;
+  jsonSave(db);
+}
+
+async function deleteSetting(key) {
+  if (USE_PG) {
+    await pool.query('DELETE FROM app_settings WHERE key = $1', [key]);
+    return;
+  }
+  const db = jsonLoad();
+  delete db.settings[key];
+  jsonSave(db);
+}
+
+// Stored key wins; the Railway variable remains as a fallback.
+async function getRentcastKey() {
+  const stored = await getSetting('rentcast_api_key');
+  if (stored) return { key: stored, source: 'database' };
+  const envKey = (process.env.RENTCAST_API_KEY || '').trim();
+  if (envKey) return { key: envKey, source: 'environment' };
+  return { key: '', source: 'none' };
+}
 
 /* ------------------------------------------------------------------ */
 /* API routes                                                          */
@@ -530,6 +589,45 @@ app.post('/api/applications/:id/status', async (req, res) => {
   }
 });
 
+/* ---------------- RentCast key settings ---------------- */
+
+// Status only — the key itself is never returned.
+app.get('/api/settings/rentcast', async (req, res) => {
+  try {
+    const { source } = await getRentcastKey();
+    res.json({ configured: source !== 'none', source });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to check RentCast settings' });
+  }
+});
+
+// Save the RentCast key in the app's own database (paste once).
+app.post('/api/settings/rentcast', async (req, res) => {
+  try {
+    const apiKey = String((req.body || {}).apiKey || '').trim();
+    if (!apiKey) return res.status(400).json({ error: 'Paste your RentCast API key first.' });
+    if (apiKey.length > 200) return res.status(400).json({ error: 'That key looks too long — check you copied only the key.' });
+    await setSetting('rentcast_api_key', apiKey);
+    res.json({ configured: true, source: 'database' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to save the RentCast key' });
+  }
+});
+
+// Remove the stored key (falls back to the Railway variable, if set).
+app.delete('/api/settings/rentcast', async (req, res) => {
+  try {
+    await deleteSetting('rentcast_api_key');
+    const { source } = await getRentcastKey();
+    res.json({ configured: source !== 'none', source });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to remove the RentCast key' });
+  }
+});
+
 /* ---------------- RentCast import ---------------- */
 
 // Map one RentCast long-term rental listing into this app's listing shape.
@@ -576,9 +674,9 @@ function rentcastToListing(r) {
 // Import: pull active rental listings from RentCast for a city/state/ZIP
 app.post('/api/import/rentals', async (req, res) => {
   try {
-    const apiKey = process.env.RENTCAST_API_KEY || '';
+    const { key: apiKey } = await getRentcastKey();
     if (!apiKey) {
-      return res.status(503).json({ error: "Import isn't configured yet — add RENTCAST_API_KEY to the Railway variables." });
+      return res.status(503).json({ error: "Import isn't configured yet — paste your RentCast API key in the RentCast API key box below, then try again." });
     }
     const body = req.body || {};
     const city = String(body.city || '').trim();
@@ -612,7 +710,7 @@ app.post('/api/import/rentals', async (req, res) => {
 
     if (!upstream.ok) {
       if (upstream.status === 401 || upstream.status === 403) {
-        return res.status(502).json({ error: 'RentCast rejected the API key — check that RENTCAST_API_KEY is correct in the Railway variables.' });
+        return res.status(502).json({ error: 'RentCast rejected the API key — check the key saved in the RentCast API key box below (copy it fresh from your RentCast dashboard).' });
       }
       if (upstream.status === 429) {
         return res.status(502).json({ error: 'RentCast rate limit hit — the free monthly quota may be used up. Try again later or upgrade your RentCast plan.' });

@@ -193,6 +193,21 @@
       <div class="row mt">
         <button class="btn" id="imp-btn" type="button">Import rentals</button>
       </div>
+      <hr style="margin:16px 0;border:none;border-top:1px solid #e5e7eb">
+      <h4 style="margin:0 0 4px">RentCast API key</h4>
+      <p class="sub" style="margin:0">Paste your key once — it is saved in the app's own database, so the import works without any Railway variable. The key is never shown back.</p>
+      <div class="msg" id="key-msg"></div>
+      <div class="filters">
+        <div>
+          <label for="key-input">API key</label>
+          <input id="key-input" type="password" placeholder="Paste your RentCast API key" autocomplete="off">
+        </div>
+      </div>
+      <div class="row mt">
+        <button class="btn" id="key-save-btn" type="button">Save key</button>
+        <button class="btn secondary" id="key-remove-btn" type="button">Remove key</button>
+        <span class="sub" id="key-status" style="align-self:center">Checking…</span>
+      </div>
     </div>
 
     <div id="browse-results"><div class="empty">Loading rooms…</div></div>
@@ -382,6 +397,44 @@ $('imp-btn').addEventListener('click', async () => {
     btn.textContent = original;
   }
 });
+
+/* ---------- RentCast API key (saved in the app) ---------- */
+async function refreshKeyStatus() {
+  const status = $('key-status');
+  try {
+    const r = await api('/api/settings/rentcast');
+    status.textContent = r.configured
+      ? '✅ Key saved' + (r.source === 'environment' ? ' (from Railway variable)' : '')
+      : 'No key saved yet';
+  } catch (e) {
+    status.textContent = 'Could not check key status';
+  }
+}
+$('key-save-btn').addEventListener('click', async () => {
+  const key = $('key-input').value.trim();
+  if (!key) { showMsg($('key-msg'), 'Paste your RentCast API key first.', false); return; }
+  try {
+    await api('/api/settings/rentcast', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ apiKey: key })
+    });
+    $('key-input').value = '';
+    showMsg($('key-msg'), '✅ Key saved. Now run an import below — no Railway step needed.', true);
+    refreshKeyStatus();
+  } catch (e) {
+    showMsg($('key-msg'), e.message, false);
+  }
+});
+$('key-remove-btn').addEventListener('click', async () => {
+  try {
+    const r = await api('/api/settings/rentcast', { method: 'DELETE' });
+    $('key-input').value = '';
+    showMsg($('key-msg'), r.configured ? 'Stored key removed — the Railway variable (if any) is now in use.' : 'Stored key removed.', true);
+    refreshKeyStatus();
+  } catch (e) {
+    showMsg($('key-msg'), e.message, false);
+  }
+});
+refreshKeyStatus();
 
 /* ---------- Detail + Apply ---------- */
 async function showDetail(id) {
