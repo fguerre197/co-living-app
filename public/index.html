@@ -210,6 +210,28 @@
       </div>
     </div>
 
+    <div class="panel">
+      <h3 style="margin:0 0 4px">Visitor stats</h3>
+      <p class="sub" style="margin:0">How many people are visiting your app. A visit counts once per person every 30 minutes, so refreshes don't inflate the numbers, and search-engine bots are ignored.</p>
+      <div class="row mt" style="gap:28px">
+        <div><div style="font-size:26px;font-weight:700" id="vs-total">–</div><div class="sub">Total visits</div></div>
+        <div><div style="font-size:26px;font-weight:700" id="vs-today">–</div><div class="sub">Today</div></div>
+        <div><div style="font-size:26px;font-weight:700" id="vs-week">–</div><div class="sub">Last 7 days</div></div>
+      </div>
+      <div id="vs-recent" class="mt"></div>
+      <div class="row mt">
+        <button class="btn secondary" id="vs-refresh" type="button">Refresh stats</button>
+      </div>
+      <hr style="margin:16px 0;border:none;border-top:1px solid #e5e7eb">
+      <h4 style="margin:0 0 4px">Phone notifications</h4>
+      <p class="sub" style="margin:0">Get a buzz on your phone for every new visitor. Install the free <b>ntfy</b> app (App Store or Google Play), tap <b>+ Subscribe</b>, and enter this topic exactly:</p>
+      <p style="margin:8px 0"><code id="ntfy-topic" style="font-size:16px;font-weight:700">…</code></p>
+      <div class="row mt">
+        <button class="btn" id="ntfy-test" type="button">Send test notification</button>
+        <span class="sub" id="ntfy-msg" style="align-self:center"></span>
+      </div>
+    </div>
+
     <div id="browse-results"><div class="empty">Loading rooms…</div></div>
 
     <!-- Detail + apply -->
@@ -286,6 +308,12 @@
 </main>
 
 <script>
+/* Visitor beacon — the server decides whether this load is a new visit. */
+try {
+  fetch('/api/track', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path: location.pathname, referrer: document.referrer || '' }),
+    keepalive: true }).catch(function () {});
+} catch (e) {}
 const $ = (id) => document.getElementById(id);
 const AMENITIES = ['Wi-Fi', 'In-unit laundry', 'Washer/dryer access', 'Parking', 'Air conditioning',
   'Dishwasher', 'Backyard / patio', 'Gym', 'Pets allowed', 'Desk / workspace', 'TV', 'Bike storage'];
@@ -696,6 +724,40 @@ async function setAppStatus(id, status) {
   } catch (e) { showMsg($('inbox-msg'), e.message, false); }
 }
 
+/* ---------- Visitor stats + notifications ---------- */
+async function loadVisitorStats() {
+  try {
+    const s = await api('/api/stats/visits');
+    $('vs-total').textContent = s.total;
+    $('vs-today').textContent = s.today;
+    $('vs-week').textContent = s.last7Days;
+    const box = $('vs-recent');
+    if (!s.recent || !s.recent.length) {
+      box.innerHTML = '<div class="sub">No visits recorded yet.</div>';
+    } else {
+      box.innerHTML = s.recent.map(function (v) {
+        const when = new Date(v.at).toLocaleString();
+        let from = 'Direct / bookmark';
+        if (v.referrer) { try { from = new URL(v.referrer).hostname; } catch (e) { from = v.referrer; } }
+        return '<div class="sub" style="margin:2px 0">' + esc(when) + ' — arrived from ' + esc(from) + '</div>';
+      }).join('');
+    }
+  } catch (e) { /* stats are optional */ }
+  try {
+    const n = await api('/api/settings/notify');
+    if (n.topic) $('ntfy-topic').textContent = n.topic;
+  } catch (e) {}
+}
+$('vs-refresh').addEventListener('click', loadVisitorStats);
+$('ntfy-test').addEventListener('click', async () => {
+  try {
+    await api('/api/stats/test-notify', { method: 'POST' });
+    $('ntfy-msg').textContent = 'Sent — check your phone.';
+  } catch (e) {
+    $('ntfy-msg').textContent = 'Could not send — try again.';
+  }
+});
+
 /* ---------- Init ---------- */
 const savedEmail = localStorage.getItem('ownerEmail') || '';
 if (savedEmail) {
@@ -704,6 +766,7 @@ if (savedEmail) {
   $('lf-owner-email').value = savedEmail;
 }
 loadBrowse();
+loadVisitorStats();
 </script>
 </body>
 </html>

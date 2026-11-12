@@ -136,6 +136,13 @@ async function pgInit() {
       value TEXT NOT NULL DEFAULT '',
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
+    CREATE TABLE IF NOT EXISTS page_views (
+      id SERIAL PRIMARY KEY,
+      visitor_id TEXT NOT NULL DEFAULT '',
+      path TEXT NOT NULL DEFAULT '',
+      referrer TEXT NOT NULL DEFAULT '',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
   `);
 }
 
@@ -270,10 +277,11 @@ function jsonLoad() {
     const parsed = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
     if (Array.isArray(parsed.listings) && Array.isArray(parsed.applications)) {
       if (!parsed.settings || typeof parsed.settings !== 'object') parsed.settings = {};
+      if (!Array.isArray(parsed.pageViews)) parsed.pageViews = [];
       return parsed;
     }
   } catch (_) { /* missing or unreadable file: start fresh */ }
-  return { listings: [], applications: [], settings: {}, nextListingId: 1, nextApplicationId: 1 };
+  return { listings: [], applications: [], settings: {}, pageViews: [], nextListingId: 1, nextApplicationId: 1 };
 }
 
 function jsonSave(db) {
@@ -741,6 +749,141 @@ app.post('/api/import/rentals', async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to import rentals' });
+  }
+});
+
+/* ---------------- Visitor tracking + phone notifications ---------------- */
+/* The page sends one beacon per load. A 30-minute cookie makes refreshes */
+/* and repeat loads count as the same visit, and bots are ignored. Each    */
+/* new visit is logged and, if a notification topic exists, pushed to the  */
+/* owner's phone through ntfy.sh (free, no account).                       */
+
+const crypto = require('crypto');
+const BOT_UA = /(bot|crawler|spider|crawling|headless|preview|monitor)/i;
+
+function parseCookies(req) {
+  const out = {};
+  const raw = req.headers.cookie || '';
+  for (const part of raw.split(';')) {
+    const i = part.indexOf('=');
+    if (i > 0) out[part.slice(0, i).trim()] = decodeURIComponent(part.slice(i + 1).trim());
+  }
+  return out;
+}
+
+function etDateString(d) {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(d);
+}
+
+async function recordVisit(vid, pagePath, referrer) {
+  if (USE_PG) {
+    await pool.query('INSERT INTO page_views (visitor_id, path, referrer) VALUES ($1, $2, $3)', [vid, pagePath, referrer]);
+    return;
+  }
+  const db = jsonLoad();
+  db.pageViews.push({ t: new Date().toISOString(), vid, path: pagePath, referrer });
+  if (db.pageViews.length > 5000) db.pageViews = db.pageViews.slice(-5000);
+  jsonSave(db);
+}
+
+async function visitStats() {
+  if (USE_PG) {
+    const total = await pool.query('SELECT count(*)::int AS n FROM page_views');
+    const today = await pool.query(
+      `SELECT count(*)::int AS n FROM page_views
+       WHERE (created_at AT TIME ZONE 'America/New_York')::date = (now() AT TIME ZONE 'America/New_York')::date`);
+    const week = await pool.query(`SELECT count(*)::int AS n FROM page_views WHERE created_at > now() - interval '7 days'`);
+    const recent = await pool.query('SELECT path, referrer, created_at FROM page_views ORDER BY id DESC LIMIT 15');
+    return {
+      total: total.rows[ (0) ].n,
+      today: today.rows[0].n,
+      last7Days: week.rows[0].n,
+      recent: recent.rows.map(r => ({ at: r.created_at, path: r.path, referrer: r.referrer }))
+    };
+  }
+  const db = jsonLoad();
+  const views = db.pageViews || [];
+  const todayStr = etDateString(new Date());
+  const weekAgo = Date.now() - 7 * 24 * 3600 * 1000;
+  return {
+    total: views.length,
+    today: views.filter(v => etDateString(new Date(v.t)) === todayStr).length,
+    last7Days: views.filter(v => new Date(v.t).getTime() > weekAgo).length,
+    recent: views.slice(-15).reverse().map(v => ({ at: v.t, path: v.path, referrer: v.referrer }))
+  };
+}
+
+// The notification topic is generated once and stored like the RentCast
+// key. Anyone who knows the topic can subscribe to it, so it is random.
+async function getNotifyTopic() {
+  let topic = await getSetting('notify_topic');
+  if (!topic) {
+    topic = 'coliving-' + crypto.randomBytes(8).toString('hex');
+    await setSetting('notify_topic', topic);
+  }
+  return topic;
+}
+
+async function sendNtfy(title, message) {
+  try {
+    const topic = await getNotifyTopic();
+    const r = await fetch('https://ntfy.sh/' + encodeURIComponent(topic), {
+      method: 'POST',
+      headers: { 'Title': title },
+      body: message,
+      signal: AbortSignal.timeout(5000)
+    });
+    return r.ok;
+  } catch (_) { return false; /* notifications are best-effort */ }
+}
+
+app.post('/api/track', async (req, res) => {
+  try {
+    const ua = req.headers['user-agent'] || '';
+    if (!ua || BOT_UA.test(ua)) return res.json({ counted: false });
+    const cookies = parseCookies(req);
+    let vid = cookies.cl_vid;
+    if (!vid) {
+      vid = crypto.randomBytes(8).toString('hex');
+      res.append('Set-Cookie', 'cl_vid=' + vid + '; Path=/; Max-Age=31536000; HttpOnly; SameSite=Lax');
+    }
+    if (cookies.cl_visit) return res.json({ counted: false });
+    res.append('Set-Cookie', 'cl_visit=1; Path=/; Max-Age=1800; HttpOnly; SameSite=Lax');
+    const body = req.body || {};
+    const pagePath = String(body.path || '/').slice(0, 200);
+    const referrer = String(body.referrer || '').slice(0, 300);
+    await recordVisit(vid, pagePath, referrer);
+    const stats = await visitStats();
+    sendNtfy('Co-Living Room Finder', 'New visitor on your app — ' + stats.today + ' visit(s) today, ' + stats.total + ' total.');
+    res.json({ counted: true });
+  } catch (err) {
+    console.error(err);
+    res.json({ counted: false });
+  }
+});
+
+app.get('/api/stats/visits', async (req, res) => {
+  try {
+    res.json(await visitStats());
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to load visitor stats' });
+  }
+});
+
+app.post('/api/stats/test-notify', async (req, res) => {
+  const topic = await getNotifyTopic();
+  const ok = await sendNtfy('Co-Living Room Finder', 'Test notification — your visitor alerts are working.');
+  res.json({ sent: ok, topic });
+});
+
+// The topic is how the owner subscribes in the ntfy app, so the app shows it.
+app.get('/api/settings/notify', async (req, res) => {
+  try {
+    res.json({ topic: await getNotifyTopic() });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to load notification settings' });
   }
 });
 
